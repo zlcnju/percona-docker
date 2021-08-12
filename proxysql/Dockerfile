@@ -2,7 +2,7 @@ FROM golang:1.13 AS go_builder
 WORKDIR /go/src/github.com/percona/percona-xtradb-cluster-operator/src
 
 RUN go get k8s.io/apimachinery/pkg/util/sets \
-    && curl -Lf -o /go/src/github.com/percona/percona-xtradb-cluster-operator/src/peer-list.go https://raw.githubusercontent.com/percona/percona-xtradb-cluster-operator/master/cmd/peer-list/main.go \
+    && curl -Lf -o /go/src/github.com/percona/percona-xtradb-cluster-operator/src/peer-list.go https://raw.githubusercontent.com/percona/percona-xtradb-cluster-operator/main/cmd/peer-list/main.go \
     && go build peer-list.go
 
 FROM centos:8 AS centos8
@@ -12,7 +12,7 @@ LABEL org.opencontainers.image.authors="info@percona.com"
 # check repository package signature in secure way
 RUN set -ex; \
     export GNUPGHOME="$(mktemp -d)"; \
-    gpg --batch --keyserver ha.pool.sks-keyservers.net --recv-keys 430BDF5C56E7C94E848EE60C1C4CBDCDCD2EFD2A 99DB70FAE1D7CE227FB6488205B555B38483C65D; \
+    gpg --batch --keyserver keyserver.ubuntu.com --recv-keys 430BDF5C56E7C94E848EE60C1C4CBDCDCD2EFD2A 99DB70FAE1D7CE227FB6488205B555B38483C65D; \
     gpg --batch --export --armor 430BDF5C56E7C94E848EE60C1C4CBDCDCD2EFD2A > ${GNUPGHOME}/RPM-GPG-KEY-Percona; \
     gpg --batch --export --armor 99DB70FAE1D7CE227FB6488205B555B38483C65D > ${GNUPGHOME}/RPM-GPG-KEY-centosofficial; \
     rpmkeys --import ${GNUPGHOME}/RPM-GPG-KEY-Percona ${GNUPGHOME}/RPM-GPG-KEY-centosofficial; \
@@ -26,8 +26,8 @@ RUN set -ex; \
     percona-release setup pxc80; \
     percona-release enable tools testing
 
-ENV PXC_VERSION 8.0.20-11.3
-ENV PROXYSQL_VERSION 2.0.15-1.1
+ENV PXC_VERSION 8.0.23-14.1
+ENV PROXYSQL_VERSION 2.0.18-1.1
 ENV OS_VER el8
 ENV FULL_PERCONA_VERSION "$PXC_VERSION.$OS_VER"
 ENV FULL_PROXYSQL_VERSION "$PROXYSQL_VERSION.$OS_VER"
@@ -80,4 +80,4 @@ VOLUME /var/lib/proxysql
 ENTRYPOINT ["/entrypoint.sh"]
 
 EXPOSE 3306 6032
-CMD ["/usr/bin/proxysql", "-f", "-c", "/etc/proxysql/proxysql.cnf"]
+CMD ["/usr/bin/proxysql", "-f", "-c", "/etc/proxysql/proxysql.cnf", "--reload"]

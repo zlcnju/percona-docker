@@ -11,8 +11,26 @@ SOCAT_OPTS="TCP-LISTEN:4444,reuseaddr,retry=30"
 SST_INFO_NAME=sst_info
 
 function get_backup_source() {
+    CLUSTER_SIZE=$(peer-list -on-start=/usr/bin/get-pxc-state -service=$PXC_SERVICE 2>&1 \
+        | grep wsrep_cluster_size \
+        | sort \
+        | tail -1 \
+        | cut -d : -f 12)
+
+    FIRST_NODE=$(peer-list -on-start=/usr/bin/get-pxc-state -service=$PXC_SERVICE 2>&1 \
+        | grep wsrep_ready:ON:wsrep_connected:ON:wsrep_local_state_comment:Synced:wsrep_cluster_status:Primary \
+        | sort -r \
+        | tail -1 \
+        | cut -d : -f 2 \
+        | cut -d . -f 1)
+
+    SKIP_FIRST_POD='|'
+    if (( $CLUSTER_SIZE > 1 )); then
+        SKIP_FIRST_POD="$FIRST_NODE"
+    fi
     peer-list -on-start=/usr/bin/get-pxc-state -service=$PXC_SERVICE 2>&1 \
         | grep wsrep_ready:ON:wsrep_connected:ON:wsrep_local_state_comment:Synced:wsrep_cluster_status:Primary \
+        | grep -v $SKIP_FIRST_POD \
         | sort \
         | tail -1 \
         | cut -d : -f 2 \
@@ -41,7 +59,7 @@ function check_ssl() {
     fi
 
     if [ -f "$CA" -a -f "$KEY" -a -f "$CERT" ]; then
-        GARBD_OPTS="socket.ssl_ca=${CA};socket.ssl_cert=${CERT};socket.ssl_key=${KEY};socket.ssl_cipher=;pc.weight=1;${GARBD_OPTS}"
+        GARBD_OPTS="socket.ssl_ca=${CA};socket.ssl_cert=${CERT};socket.ssl_key=${KEY};socket.ssl_cipher=;pc.weight=0;${GARBD_OPTS}"
         SOCAT_OPTS="openssl-listen:4444,reuseaddr,cert=${CERT},key=${KEY},cafile=${CA},verify=1,retry=30"
     fi
 }
@@ -75,6 +93,9 @@ function request_streaming() {
         exit 1
     fi
     if grep 'INFO: Shifting CLOSED -> DESTROYED (TO: -1)' /tmp/garbd.log; then
+        exit 1
+    fi
+    if ! grep 'INFO: Sending state transfer request' /tmp/garbd.log; then
         exit 1
     fi
 }
@@ -114,6 +135,15 @@ function backup_volume() {
     md5sum xtrabackup.stream | tee md5sum.txt
 }
 
+is_object_exist() {
+    local bucket="$1"
+    local object="$2"
+
+    if [[ -n "$(mc -C /tmp/mc --json ls  "dest/$bucket/$object" | jq '.status')" ]]; then
+        return 1
+    fi
+}
+
 function backup_s3() {
     S3_BUCKET_PATH=${S3_BUCKET_PATH:-$PXC_SERVICE-$(date +%F-%H-%M)-xtrabackup.stream}
 
@@ -122,8 +152,8 @@ function backup_s3() {
     echo "+ mc -C /tmp/mc config host add dest "${ENDPOINT:-https://s3.amazonaws.com}" ACCESS_KEY_ID SECRET_ACCESS_KEY"
     mc -C /tmp/mc config host add dest "${ENDPOINT:-https://s3.amazonaws.com}" "$ACCESS_KEY_ID" "$SECRET_ACCESS_KEY"
     set -x
-    xbcloud delete --storage=s3 --s3-bucket="$S3_BUCKET" "$S3_BUCKET_PATH.$SST_INFO_NAME" || :
-    xbcloud delete --storage=s3 --s3-bucket="$S3_BUCKET" "$S3_BUCKET_PATH" || :
+    is_object_exist "$S3_BUCKET" "$S3_BUCKET_PATH.$SST_INFO_NAME" || xbcloud delete --storage=s3 --s3-bucket="$S3_BUCKET" "$S3_BUCKET_PATH.$SST_INFO_NAME"
+    is_object_exist "$S3_BUCKET" "$S3_BUCKET_PATH" || xbcloud delete --storage=s3 --s3-bucket="$S3_BUCKET" "$S3_BUCKET_PATH"
     request_streaming
 
     socat -u "$SOCAT_OPTS" stdio | xbstream -x -C /tmp

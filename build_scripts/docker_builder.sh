@@ -18,7 +18,7 @@ Usage: $0 [OPTIONS]
         --load_docker=PATH  Load docker from image archive. using path from paramiter
         --test_docker       Run basic tests to verify docker image
         --repo=github_repo  Default value is https://github.com/percona/percona-docker.git
-        --branch=BRANCH     Default branch is master
+        --branch=BRANCH     Default branch is main
         --help) usage ;;
 Example $0 --builddir=/tmp/docker_build --build_docker=1 --save_docker=1 --docker-name=percona-server-mongodb.36 --version=3.6.1-1.0
 EOF
@@ -77,7 +77,7 @@ BUILD=0
 VERSION=0
 SAVE=0
 LOAD=0
-BRANCH=master
+BRANCH=main
 TEST=0
 OS=
 REPO="https://github.com/percona/percona-docker.git"
@@ -133,7 +133,7 @@ install_docker() {
   apt-get install apt-transport-https ca-certificates -y
 
   sh -c "echo deb https://apt.dockerproject.org/repo debian-jessie main > /etc/apt/sources.list.d/docker.list"
-  apt-key adv --keyserver hkp://p80.pool.sks-keyservers.net:80 --recv-keys 58118E89F3A912897C070ADBF76221572C52609D
+  apt-key adv --keyserver keyserver.ubuntu.com --recv-keys 58118E89F3A912897C070ADBF76221572C52609D
 
   apt-get update
   apt-get install docker-engine coreutils git -y

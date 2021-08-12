@@ -8,12 +8,14 @@ function main() {
 
     NODE_LIST=()
     NODE_LIST_REPL=()
+    NODE_LIST_MYSQLX=()
     NODE_LIST_ADMIN=()
     NODE_LIST_BACKUP=()
     firs_node=''
     firs_node_admin=''
     main_node=''
 
+    SERVER_OPTIONS=${HA_SERVER_OPTIONS:-'check inter 10000 rise 1 fall 2 weight 1'}
     send_proxy=''
     path_to_haproxy_cfg='/etc/haproxy/pxc'
     if [[ "${IS_PROXY_PROTOCOL}" = "yes" ]]; then
@@ -31,30 +33,35 @@ function main() {
 
         node_name=$(echo "$pxc_host" | cut -d . -f -1)
         node_id=$(echo $node_name |  awk -F'-' '{print $NF}')
-        NODE_LIST_REPL+=( "server $node_name $pxc_host:3306 $send_proxy check inter 10000 rise 1 fall 2 weight 1" )
+        NODE_LIST_REPL+=( "server $node_name $pxc_host:3306 $send_proxy $SERVER_OPTIONS" )
         if [ "x$node_id" == 'x0' ]; then
             main_node="$pxc_host"
-            firs_node="server $node_name $pxc_host:3306 $send_proxy check inter 10000 rise 1 fall 2 weight 1 on-marked-up shutdown-backup-sessions"
-            firs_node_admin="server $node_name $pxc_host:33062 check inter 10000 rise 1 fall 2 weight 1 on-marked-up shutdown-backup-sessions"
+            firs_node="server $node_name $pxc_host:3306 $send_proxy $SERVER_OPTIONS on-marked-up shutdown-backup-sessions"
+            firs_node_admin="server $node_name $pxc_host:33062 $SERVER_OPTIONS on-marked-up shutdown-backup-sessions"
+            firs_node_mysqlx="server $node_name $pxc_host:33060 $SERVER_OPTIONS on-marked-up shutdown-backup-sessions"
             continue
         fi
         NODE_LIST_BACKUP+=("galera-nodes/$node_name" "galera-admin-nodes/$node_name")
-        NODE_LIST+=( "server $node_name $pxc_host:3306 $send_proxy check inter 10000 rise 1 fall 2 weight 1 backup" )
-        NODE_LIST_ADMIN+=( "server $node_name $pxc_host:33062 check inter 10000 rise 1 fall 2 weight 1 backup" )
+        NODE_LIST+=( "server $node_name $pxc_host:3306 $send_proxy $SERVER_OPTIONS backup" )
+        NODE_LIST_ADMIN+=( "server $node_name $pxc_host:33062 $SERVER_OPTIONS backup" )
+        NODE_LIST_MYSQLX+=( "server $node_name $pxc_host:33060 $send_proxy $SERVER_OPTIONS backup" )
     done
 
     if [ -n "$firs_node" ]; then
         if [[ "${#NODE_LIST[@]}" -ne 0 ]]; then
             NODE_LIST=( "$firs_node" "$(printf '%s\n' "${NODE_LIST[@]}" | sort --version-sort -r | uniq)" )
             NODE_LIST_ADMIN=( "$firs_node_admin" "$(printf '%s\n' "${NODE_LIST_ADMIN[@]}" | sort --version-sort -r | uniq)" )
+            NODE_LIST_MYSQLX=( "$firs_node_mysqlx" "$(printf '%s\n' "${NODE_LIST_MYSQLX[@]}" | sort --version-sort -r | uniq)" )
         else
             NODE_LIST=( "$firs_node" )
             NODE_LIST_ADMIN=( "$firs_node_admin" )
+            NODE_LIST_ADMIN=( "$firs_node_mysqlx" )
         fi
     else
         if [[ "${#NODE_LIST[@]}" -ne 0 ]]; then
             NODE_LIST=( "$(printf '%s\n' "${NODE_LIST[@]}" | sort --version-sort -r | uniq)" )
             NODE_LIST_ADMIN=( "$(printf '%s\n' "${NODE_LIST_ADMIN[@]}" | sort --version-sort -r | uniq)" )
+            NODE_LIST_MYSQLX=( "$(printf '%s\n' "${NODE_LIST_MYSQLX[@]}" | sort --version-sort -r | uniq)" )
         fi
     fi
 
@@ -64,7 +71,6 @@ cat <<-EOF > "$path_to_haproxy_cfg/haproxy.cfg"
       option srvtcpka
       balance roundrobin
       option external-check
-      external-check path "$MONITOR_PASSWORD"
       external-check command /usr/local/bin/check_pxc.sh
 EOF
 
@@ -77,7 +83,6 @@ cat <<-EOF >> "$path_to_haproxy_cfg/haproxy.cfg"
       option srvtcpka
       balance roundrobin
       option external-check
-      external-check path "$MONITOR_PASSWORD"
       external-check command /usr/local/bin/check_pxc.sh
 EOF
 
@@ -89,19 +94,31 @@ cat <<-EOF >> "$path_to_haproxy_cfg/haproxy.cfg"
       option srvtcpka
       balance roundrobin
       option external-check
-      external-check path "$MONITOR_PASSWORD"
       external-check command /usr/local/bin/check_pxc.sh
 EOF
     ( IFS=$'\n'; echo "${NODE_LIST_REPL[*]}" ) >> "$path_to_haproxy_cfg/haproxy.cfg"
 
+cat <<-EOF >> "$path_to_haproxy_cfg/haproxy.cfg"
+    backend galera-mysqlx-nodes
+      mode tcp
+      option srvtcpka
+      balance roundrobin
+      option external-check
+      external-check command /usr/local/bin/check_pxc.sh
+EOF
+    ( IFS=$'\n'; echo "${NODE_LIST_MYSQLX[*]}" ) >> "$path_to_haproxy_cfg/haproxy.cfg"
+
     SOCKET='/etc/haproxy/pxc/haproxy.sock'
     path_to_custom_global_cnf='/etc/haproxy-custom'
     if [ -f "$path_to_custom_global_cnf/haproxy-global.cfg" ]; then
+        haproxy -c -f "$path_to_custom_global_cnf/haproxy-global.cfg" -f $path_to_haproxy_cfg/haproxy.cfg || EC=$?
+    fi
+
+    if [ -f "$path_to_custom_global_cnf/haproxy-global.cfg" -a -z "$EC" ]; then
         SOCKET_CUSTOM=$(grep 'stats socket' "$path_to_custom_global_cnf/haproxy-global.cfg" | awk '{print $3}')
         if [ -S "$SOCKET_CUSTOM" ]; then
             SOCKET="$SOCKET_CUSTOM"
         fi
-        haproxy -c -f "$path_to_custom_global_cnf/haproxy-global.cfg" -f $path_to_haproxy_cfg/haproxy.cfg
     else
         haproxy -c -f /etc/haproxy/haproxy-global.cfg -f $path_to_haproxy_cfg/haproxy.cfg
     fi
@@ -114,8 +131,8 @@ EOF
          fi
     fi
 
-    if [ -S "$path_to_haproxy_cfg/haproxy-master.sock" ]; then
-        echo 'reload' | socat stdio "$path_to_haproxy_cfg/haproxy-master.sock"
+    if [ -S "$path_to_haproxy_cfg/haproxy-main.sock" ]; then
+        echo 'reload' | socat stdio "$path_to_haproxy_cfg/haproxy-main.sock"
     fi
 }
 

@@ -6,8 +6,26 @@ set -o xtrace
 GARBD_OPTS=""
 
 function get_backup_source() {
+    CLUSTER_SIZE=$(peer-list -on-start=/usr/bin/get-pxc-state -service=$PXC_SERVICE 2>&1 \
+        | grep wsrep_cluster_size \
+        | sort \
+        | tail -1 \
+        | cut -d : -f 12)
+
+    FIRST_NODE=$(peer-list -on-start=/usr/bin/get-pxc-state -service=$PXC_SERVICE 2>&1 \
+        | grep wsrep_ready:ON:wsrep_connected:ON:wsrep_local_state_comment:Synced:wsrep_cluster_status:Primary \
+        | sort -r \
+        | tail -1 \
+        | cut -d : -f 2 \
+        | cut -d . -f 1)
+
+    SKIP_FIRST_POD='|'
+    if (( $CLUSTER_SIZE > 1 )); then
+        SKIP_FIRST_POD="$FIRST_NODE"
+    fi
     peer-list -on-start=/usr/bin/get-pxc-state -service=$PXC_SERVICE 2>&1 \
         | grep wsrep_ready:ON:wsrep_connected:ON:wsrep_local_state_comment:Synced:wsrep_cluster_status:Primary \
+        | grep -v $SKIP_FIRST_POD \
         | sort \
         | tail -1 \
         | cut -d : -f 2 \
@@ -36,7 +54,7 @@ function check_ssl() {
     fi
 
     if [ -f "$CA" -a -f "$KEY" -a -f "$CERT" ]; then
-        GARBD_OPTS="socket.ssl_ca=${CA};socket.ssl_cert=${CERT};socket.ssl_key=${KEY};socket.ssl_cipher=;pc.weight=1;${GARBD_OPTS}"
+        GARBD_OPTS="socket.ssl_ca=${CA};socket.ssl_cert=${CERT};socket.ssl_key=${KEY};socket.ssl_cipher=;pc.weight=0;${GARBD_OPTS}"
     fi
 }
 
@@ -50,6 +68,7 @@ function request_streaming() {
         exit 1
     fi
 
+    set +o errexit
     echo '[INFO] garbd was started'
         garbd \
             --address "gcomm://$NODE_NAME.$PXC_SERVICE?gmcast.listen_addr=tcp://0.0.0.0:4567" \
@@ -62,6 +81,9 @@ function request_streaming() {
 
     echo '[INFO] garbd was finished'
 
+    if [ -f '/tmp/backup-is-completed' ]; then
+        exit 0
+    fi
     exit $EXID_CODE
 }
 

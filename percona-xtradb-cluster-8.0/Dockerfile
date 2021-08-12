@@ -2,7 +2,7 @@ FROM golang:1.13 AS go_builder
 WORKDIR /go/src/github.com/percona/percona-xtradb-cluster-operator/src
 
 RUN go get k8s.io/apimachinery/pkg/util/sets; \
-    curl -Lf -o /go/src/github.com/percona/percona-xtradb-cluster-operator/src/peer-list.go https://raw.githubusercontent.com/percona/percona-xtradb-cluster-operator/master/cmd/peer-list/main.go; \
+    curl -Lf -o /go/src/github.com/percona/percona-xtradb-cluster-operator/src/peer-list.go https://raw.githubusercontent.com/percona/percona-xtradb-cluster-operator/main/cmd/peer-list/main.go; \
 	go build peer-list.go
 
 FROM centos:8 AS centos8
@@ -12,7 +12,7 @@ LABEL org.opencontainers.image.authors="info@percona.com"
 # check repository package signature in secure way
 RUN set -ex; \
     export GNUPGHOME="$(mktemp -d)"; \
-    gpg --batch --keyserver ha.pool.sks-keyservers.net --recv-keys 430BDF5C56E7C94E848EE60C1C4CBDCDCD2EFD2A 99DB70FAE1D7CE227FB6488205B555B38483C65D 94E279EB8D8F25B21810ADF121EA45AB2F86D6A1; \
+    gpg --batch --keyserver keyserver.ubuntu.com --recv-keys 430BDF5C56E7C94E848EE60C1C4CBDCDCD2EFD2A 99DB70FAE1D7CE227FB6488205B555B38483C65D 94E279EB8D8F25B21810ADF121EA45AB2F86D6A1; \
     gpg --batch --export --armor 430BDF5C56E7C94E848EE60C1C4CBDCDCD2EFD2A > ${GNUPGHOME}/RPM-GPG-KEY-Percona; \
     gpg --batch --export --armor 99DB70FAE1D7CE227FB6488205B555B38483C65D > ${GNUPGHOME}/RPM-GPG-KEY-centosofficial; \
     gpg --batch --export --armor 94E279EB8D8F25B21810ADF121EA45AB2F86D6A1 > ${GNUPGHOME}/RPM-GPG-KEY-EPEL-8; \
@@ -30,7 +30,7 @@ RUN set -ex; \
 	rpm -i /tmp/pv.rpm; \
 	rm -rf /tmp/pv.rpm
 
-ENV PXC_VERSION 8.0.20-11.3
+ENV PXC_VERSION 8.0.23-14.1
 ENV PXC_REPO release
 ENV OS_VER el8
 ENV FULL_PERCONA_XTRADBCLUSTER_VERSION "$PXC_VERSION.$OS_VER"
@@ -46,6 +46,7 @@ RUN set -ex; \
 		hostname \
 		curl \
 		tzdata \
+		diffutils \
 		libaio \
 		which \
 		pam \
@@ -54,7 +55,7 @@ RUN set -ex; \
 		libev \
 		jq \
 		oniguruma \
-                cracklib-dicts \
+		cracklib-dicts \
 		dnf-utils; \
 	dnf clean all; \
 	rm -rf /var/cache/dnf
@@ -114,14 +115,23 @@ RUN if [[ -n $DEBUG ]] ; then \
 		repoquery -a --location \
 			Percona-XtraDB-Cluster-debuginfo-${FULL_PERCONA_XTRADBCLUSTER_VERSION} \
 			| xargs curl -Lf -o /tmp/Percona-XtraDB-Cluster-debuginfo.rpm; \
-		rpmkeys --checksig /tmp/Percona-XtraDB-Cluster-debuginfo.rpm; \
-		rpm -iv /tmp/Percona-XtraDB-Cluster-debuginfo.rpm --nodeps; \
-		rm -rf /tmp/Percona-XtraDB-Cluster-debuginfo.rpm; \
+		repoquery -a --location \
+			Percona-XtraDB-Cluster-server-debuginfo-${FULL_PERCONA_XTRADBCLUSTER_VERSION} \
+			| xargs curl -Lf -o /tmp/Percona-XtraDB-Cluster-server-debuginfo.rpm; \
+		rpmkeys --checksig /tmp/Percona-XtraDB-Cluster-debuginfo.rpm /tmp/Percona-XtraDB-Cluster-server-debuginfo.rpm; \
+		rpm -iv /tmp/Percona-XtraDB-Cluster-debuginfo.rpm /tmp/Percona-XtraDB-Cluster-server-debuginfo.rpm --nodeps; \
+		rm -rf /tmp/Percona-XtraDB-Cluster-debuginfo.rpm /tmp/Percona-XtraDB-Cluster-server-debuginfo.rpm; \
+		percona-release enable pdpxc-8.0 release; \
 		dnf install -y \
 			net-tools \
 			telnet \
 			nc \
-			gdb; \
+			gdb \
+			perf \
+			strace \
+			tcpdump \
+			percona-toolkit; \
+		percona-release disable pdpxc-8.0 release; \
 		dnf clean all; \
 		rm -rf /var/cache/dnf; \
 	fi

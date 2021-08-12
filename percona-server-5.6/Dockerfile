@@ -9,7 +9,7 @@ RUN useradd -u 1001 -r -g 1001 -s /sbin/nologin \
 # check repository package signature in secure way
 RUN set -ex; \
     export GNUPGHOME="$(mktemp -d)"; \
-    gpg --batch --keyserver ha.pool.sks-keyservers.net --recv-keys 430BDF5C56E7C94E848EE60C1C4CBDCDCD2EFD2A; \
+    gpg --batch --keyserver keyserver.ubuntu.com --recv-keys 430BDF5C56E7C94E848EE60C1C4CBDCDCD2EFD2A; \
     gpg --batch --export --armor 430BDF5C56E7C94E848EE60C1C4CBDCDCD2EFD2A > ${GNUPGHOME}/RPM-GPG-KEY-Percona; \
     rpmkeys --import ${GNUPGHOME}/RPM-GPG-KEY-Percona /etc/pki/rpm-gpg/RPM-GPG-KEY-CentOS-7; \
     \
@@ -24,7 +24,7 @@ RUN set -ex; \
     percona-release enable original release
 
 # install exact version of PS for repeatability
-ENV PERCONA_VERSION 5.6.50-rel90.0.1.el7
+ENV PERCONA_VERSION 5.6.51-rel91.0.1.el7
 
 RUN set -ex; \
     yum install -y \
